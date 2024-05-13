@@ -5,6 +5,7 @@ import smbus
 import time
 import threading
 import RPi.GPIO as GPIO
+from PIL import Image, ImageDraw, ImageFont
 
 # Setup for accelerometer
 bus = smbus.SMBus(1)
@@ -51,10 +52,14 @@ GPIO.add_event_detect(interrupt_pin, GPIO.RISING, callback=handle_interrupt)
 
 # Function to generate overlay frames
 def generate_overlay(camera):
+    font = ImageFont.load_default()
     while True:
         with data_lock:
             overlay_text = f"X: {accel_data[0]:.2f}g Y: {accel_data[1]:.2f}g Z: {accel_data[2]:.2f}g"
-        yield np.zeros((camera.resolution[1], camera.resolution[0], 3), dtype=np.uint8)
+        img = Image.new('RGB', (camera.resolution[0], camera.resolution[1]))
+        draw = ImageDraw.Draw(img)
+        draw.text((10, 10), overlay_text, font=font, fill=(255, 255, 255))
+        yield np.array(img)
 
 # Main function to handle camera and overlay
 def main():
@@ -62,15 +67,13 @@ def main():
         camera.resolution = (640, 480)
         camera.framerate = 24
         camera.start_preview()
-        
-        # Create an overlay from our image_frame generator
         overlay_renderer = None
         for overlay_frame in generate_overlay(camera):
             if overlay_renderer:
-                overlay_renderer.update(overlay_frame)
+                overlay_renderer.update(np.getbuffer(overlay_frame))
             else:
                 overlay_renderer = camera.add_overlay(np.getbuffer(overlay_frame), layer=3, alpha=64)
-            
+            process_accel_data()  # Process data if new data is available
             time.sleep(0.1)  # Sleep briefly to reduce CPU usage
 
         camera.stop_preview()
@@ -82,4 +85,5 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
+        GPIO.cleanup()
         GPIO.cleanup()
